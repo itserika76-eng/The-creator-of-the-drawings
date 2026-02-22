@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -26,9 +27,13 @@ class BuildResult:
     package_path: Path
     specification_path: Path
     macro_template_path: Path
-    cdw_path: Path
-    spw_path: Path
+    cdw_path: Path | None
+    spw_path: Path | None
+    fallback_cdw_payload_path: Path | None
+    fallback_spw_payload_path: Path | None
     warnings: list[str]
+    opened_in_kompas: bool
+    open_message: str
 
 
 class DrawingEngine:
@@ -43,7 +48,7 @@ class DrawingEngine:
         self.rag = StandardsRAG(Path(__file__).parent / "data" / "standards")
         self.registry_updater = LegalRegistryUpdater(
             registry_path=Path(__file__).parent / "data" / "standards_registry.json",
-            docs_dir=Path(__file__).parent / "data" / "standards",
+            docs_dir=self.output_dir,
         )
         self.kompas_exporter = KompasExporter(compas_executable=compas_executable)
 
@@ -179,11 +184,32 @@ print('Импортируйте пакет в реальный API КОМПАС-
         if not export_result.success:
             warnings.append(export_result.message)
 
+        opened_in_kompas, open_message = self._open_generated_drawing(export_result.native_cdw_path)
+        if not opened_in_kompas and open_message:
+            warnings.append(open_message)
+
         return BuildResult(
             package_path=package_path,
             specification_path=specification_path,
             macro_template_path=macro_template_path,
-            cdw_path=export_result.cdw_path,
-            spw_path=export_result.spw_path,
+            cdw_path=export_result.native_cdw_path,
+            spw_path=export_result.native_spw_path,
+            fallback_cdw_payload_path=export_result.fallback_cdw_payload_path,
+            fallback_spw_payload_path=export_result.fallback_spw_payload_path,
             warnings=warnings,
+            opened_in_kompas=opened_in_kompas,
+            open_message=open_message,
         )
+
+    def _open_generated_drawing(self, cdw_path: Path | None) -> tuple[bool, str]:
+        if cdw_path is None:
+            return False, "Автооткрытие в КОМПАС пропущено: нативный .cdw не создан"
+
+        if not cdw_path.exists():
+            return False, f"Автооткрытие в КОМПАС пропущено: файл не найден ({cdw_path})"
+
+        try:
+            subprocess.Popen([str(self.compas_executable), str(cdw_path)])
+            return True, f"Чертеж открыт в КОМПАС: {cdw_path}"
+        except Exception as exc:  # noqa: BLE001
+            return False, f"Не удалось автоматически открыть чертеж в КОМПАС: {exc}"

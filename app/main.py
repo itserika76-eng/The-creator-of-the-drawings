@@ -102,8 +102,18 @@ class App:
         self.log.insert(tk.END, f"- {result.package_path}\n")
         self.log.insert(tk.END, f"- {result.specification_path}\n")
         self.log.insert(tk.END, f"- {result.macro_template_path}\n")
-        self.log.insert(tk.END, f"- {result.cdw_path}\n")
-        self.log.insert(tk.END, f"- {result.spw_path}\n")
+        if result.cdw_path and result.spw_path:
+            self.log.insert(tk.END, f"- {result.cdw_path}\n")
+            self.log.insert(tk.END, f"- {result.spw_path}\n")
+        else:
+            self.log.insert(tk.END, "- Нативные .cdw/.spw не созданы (COM API недоступен)\n")
+            if result.fallback_cdw_payload_path:
+                self.log.insert(tk.END, f"- {result.fallback_cdw_payload_path}\n")
+            if result.fallback_spw_payload_path:
+                self.log.insert(tk.END, f"- {result.fallback_spw_payload_path}\n")
+        self.log.insert(tk.END, "\nАвтооткрытие:\n")
+        self.log.insert(tk.END, f"- {result.open_message}\n")
+
         if result.warnings:
             self.log.insert(tk.END, "\nПроверка стандартов (предупреждения):\n")
             for warning in result.warnings:
