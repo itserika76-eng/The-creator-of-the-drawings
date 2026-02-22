@@ -1,0 +1,18 @@
+{
+  "sources": [
+    {
+      "code": "ECKD-CATALOG",
+      "title": "Локальный каталог легально загруженных выдержек ЕСКД",
+      "url": "file://app/data/standards",
+      "license": "Internal licensed content",
+      "use_policy": "Разрешено для локального retrieval в рамках лицензии организации"
+    },
+    {
+      "code": "PUBLIC-NPA",
+      "title": "Публичные государственные НПА",
+      "url": "https://pravo.gov.ru/",
+      "license": "Public legal acts",
+      "use_policy": "Разрешено использовать только официально опубликованные тексты"
+    }
+  ]
+}
