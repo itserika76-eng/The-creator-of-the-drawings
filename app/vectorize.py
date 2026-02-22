@@ -16,9 +16,28 @@ class Segment:
 
 
 class ImageVectorizer:
-    """Преобразует изображение чертежа в набор сегментов для CAD-экспорта."""
+    """Преобразует изображение чертежа в набор осевых сегментов (skeleton-first)."""
 
-    def extract_segments(self, image_path: Path, max_segments: int = 500) -> list[Segment]:
+    def _skeletonize(self, bw):
+        import cv2  # type: ignore
+        import numpy as np  # type: ignore
+
+        skel = np.zeros(bw.shape, np.uint8)
+        element = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+        img = bw.copy()
+
+        for _ in range(300):
+            eroded = cv2.erode(img, element)
+            opened = cv2.dilate(eroded, element)
+            temp = cv2.subtract(img, opened)
+            skel = cv2.bitwise_or(skel, temp)
+            img = eroded.copy()
+            if cv2.countNonZero(img) == 0:
+                break
+
+        return skel
+
+    def extract_segments(self, image_path: Path, max_segments: int = 220) -> list[Segment]:
         try:
             import cv2  # type: ignore
             import numpy as np  # type: ignore
@@ -31,65 +50,83 @@ class ImageVectorizer:
 
         blur = cv2.GaussianBlur(img, (3, 3), 0)
         _, bw = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
 
-        ys, xs = np.where(bw > 0)
+        # Удаляем мелкий шум и оставляем только крупные компоненты
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(bw, connectivity=8)
+        cleaned = np.zeros_like(bw)
+        min_area = max(80, int(img.shape[0] * img.shape[1] * 0.0005))
+        for i in range(1, num_labels):
+            area = stats[i, cv2.CC_STAT_AREA]
+            if area >= min_area:
+                cleaned[labels == i] = 255
+
+        ys, xs = np.where(cleaned > 0)
         if len(xs) < 20:
             return []
 
         min_x, max_x = int(xs.min()), int(xs.max())
         min_y, max_y = int(ys.min()), int(ys.max())
-        roi = bw[min_y:max_y, min_x:max_x]
+        roi = cleaned[min_y:max_y, min_x:max_x]
         if roi.size == 0:
             return []
 
-        # 1) Основные контуры (лучше сохраняют форму простых объектов вроде дома)
-        contours, _ = cv2.findContours(roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        raw_segments: list[tuple[float, float, float, float]] = []
-        for cnt in contours:
-            peri = cv2.arcLength(cnt, True)
-            if peri < 40:
-                continue
-            approx = cv2.approxPolyDP(cnt, 0.01 * peri, True)
-            pts = approx[:, 0, :]
-            if len(pts) < 2:
-                continue
-            for i in range(len(pts)):
-                x1, y1 = pts[i]
-                x2, y2 = pts[(i + 1) % len(pts)]
-                raw_segments.append((float(x1 + min_x), float(y1 + min_y), float(x2 + min_x), float(y2 + min_y)))
-
-        # 2) Добираем внутренние линии через LSD
-        lsd = cv2.createLineSegmentDetector(0)
-        detected = lsd.detect(roi)[0]
-        if detected is not None:
-            for s in detected:
-                x1, y1, x2, y2 = s[0]
-                raw_segments.append((float(x1 + min_x), float(y1 + min_y), float(x2 + min_x), float(y2 + min_y)))
-
-        if not raw_segments:
+        skel = self._skeletonize(roi)
+        lines = cv2.HoughLinesP(
+            skel,
+            rho=1,
+            theta=np.pi / 180,
+            threshold=14,
+            minLineLength=max(10, int(min(roi.shape) * 0.06)),
+            maxLineGap=5,
+        )
+        if lines is None:
             return []
 
+        raw: list[tuple[float, float, float, float]] = []
+        for l in lines:
+            x1, y1, x2, y2 = l[0]
+            x1 += min_x
+            x2 += min_x
+            y1 += min_y
+            y2 += min_y
+            raw.append((float(x1), float(y1), float(x2), float(y2)))
+
         diag = math.hypot(max_x - min_x, max_y - min_y)
-        min_len = max(8.0, diag * 0.02)
-        max_len = diag * 0.9
+        min_len = max(8.0, diag * 0.03)
+        max_len = diag * 0.75
 
         def snap_angle(x1: float, y1: float, x2: float, y2: float) -> tuple[float, float, float, float]:
             dx, dy = x2 - x1, y2 - y1
             ang = abs(math.degrees(math.atan2(dy, dx))) % 180
-            # для простых чертежей стабилизируем горизонтали/вертикали/диагонали
             if ang < 8 or ang > 172:
                 y2 = y1
             elif 82 < ang < 98:
                 x2 = x1
+            elif 38 < ang < 52 or 128 < ang < 142:
+                # стабилизация диагоналей ~45° для крыш/скосов
+                signx = 1 if dx >= 0 else -1
+                signy = 1 if dy >= 0 else -1
+                m = max(abs(dx), abs(dy))
+                x2 = x1 + signx * m
+                y2 = y1 + signy * m
             return x1, y1, x2, y2
 
         uniq: dict[tuple[int, int, int, int], tuple[float, float, float, float]] = {}
-        for x1, y1, x2, y2 in raw_segments:
+        margin_x = int((max_x - min_x) * 0.015)
+        margin_y = int((max_y - min_y) * 0.015)
+
+        for x1, y1, x2, y2 in raw:
             x1, y1, x2, y2 = snap_angle(x1, y1, x2, y2)
             length = math.hypot(x2 - x1, y2 - y1)
             if length < min_len or length > max_len:
                 continue
+
+            # Убираем артефакты на самом краю ROI (часто рамки/обрезки)
+            if (x1 <= min_x + margin_x and x2 <= min_x + margin_x) or (x1 >= max_x - margin_x and x2 >= max_x - margin_x):
+                continue
+            if (y1 <= min_y + margin_y and y2 <= min_y + margin_y) or (y1 >= max_y - margin_y and y2 >= max_y - margin_y):
+                continue
+
             a = (round(x1 / 2), round(y1 / 2))
             b = (round(x2 / 2), round(y2 / 2))
             k = tuple(sorted((a, b)))
@@ -99,7 +136,8 @@ class ImageVectorizer:
         segs = list(uniq.values())
         if not segs:
             return []
-        segs.sort(key=lambda s: ((s[1] + s[3]) * 0.5, (s[0] + s[2]) * 0.5))
+
+        segs.sort(key=lambda s: (((s[1] + s[3]) * 0.5), ((s[0] + s[2]) * 0.5), -math.hypot(s[2] - s[0], s[3] - s[1])))
         segs = segs[:max_segments]
 
         xs2 = [s[0] for s in segs] + [s[2] for s in segs]
@@ -116,7 +154,7 @@ class ImageVectorizer:
             ny1 = CAD_BOX["y0"] + (sy1 - y1) * scale
             nx2 = CAD_BOX["x0"] + (x2 - sx0) * scale
             ny2 = CAD_BOX["y0"] + (sy1 - y2) * scale
-            if abs(nx1 - nx2) + abs(ny1 - ny2) < 0.4:
+            if abs(nx1 - nx2) + abs(ny1 - ny2) < 0.5:
                 continue
             result.append(Segment(nx1, ny1, nx2, ny2))
 
