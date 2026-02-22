@@ -4,7 +4,10 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from engine import DrawingEngine
+try:
+    from .engine import DrawingEngine
+except ImportError:
+    from engine import DrawingEngine
 
 
 class App:
@@ -74,6 +77,9 @@ class App:
         if not compas:
             messagebox.showerror("Ошибка", "Сначала выберите исполняемый файл КОМПАС-3D")
             return
+        if not Path(compas).exists():
+            messagebox.showerror("Ошибка", "Выбранный путь к КОМПАС-3D не существует")
+            return
 
         out_dir = Path.cwd() / "output"
         engine = DrawingEngine(compas_executable=Path(compas), output_dir=out_dir)
@@ -96,6 +102,8 @@ class App:
         self.log.insert(tk.END, f"- {result.package_path}\n")
         self.log.insert(tk.END, f"- {result.specification_path}\n")
         self.log.insert(tk.END, f"- {result.macro_template_path}\n")
+        self.log.insert(tk.END, f"- {result.cdw_path}\n")
+        self.log.insert(tk.END, f"- {result.spw_path}\n")
         if result.warnings:
             self.log.insert(tk.END, "\nПроверка стандартов (предупреждения):\n")
             for warning in result.warnings:
