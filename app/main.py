@@ -102,11 +102,12 @@ class App:
         self.log.insert(tk.END, f"- {result.package_path}\n")
         self.log.insert(tk.END, f"- {result.specification_path}\n")
         self.log.insert(tk.END, f"- {result.macro_template_path}\n")
-        if result.cdw_path and result.spw_path:
+        if result.cdw_path:
             self.log.insert(tk.END, f"- {result.cdw_path}\n")
-            self.log.insert(tk.END, f"- {result.spw_path}\n")
+            if result.spw_path:
+                self.log.insert(tk.END, f"- {result.spw_path}\n")
         else:
-            self.log.insert(tk.END, "- Нативные .cdw/.spw не созданы (COM API недоступен)\n")
+            self.log.insert(tk.END, "- Нативный .cdw не создан (COM API недоступен или несовместим)\n")
             if result.fallback_cdw_payload_path:
                 self.log.insert(tk.END, f"- {result.fallback_cdw_payload_path}\n")
             if result.fallback_spw_payload_path:

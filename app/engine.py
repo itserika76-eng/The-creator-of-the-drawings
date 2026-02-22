@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -209,7 +210,10 @@ print('Импортируйте пакет в реальный API КОМПАС-
             return False, f"Автооткрытие в КОМПАС пропущено: файл не найден ({cdw_path})"
 
         try:
-            subprocess.Popen([str(self.compas_executable), str(cdw_path)])
+            if sys.platform.startswith("win"):
+                subprocess.Popen(["cmd", "/c", "start", "", str(self.compas_executable), str(cdw_path)])
+            else:
+                subprocess.Popen([str(self.compas_executable), str(cdw_path)])
             return True, f"Чертеж открыт в КОМПАС: {cdw_path}"
         except Exception as exc:  # noqa: BLE001
             return False, f"Не удалось автоматически открыть чертеж в КОМПАС: {exc}"
