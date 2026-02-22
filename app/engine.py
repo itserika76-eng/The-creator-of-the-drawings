@@ -205,14 +205,25 @@ print('Импортируйте пакет в реальный API КОМПАС-
 
         ui_draw_message = "UI-рисование не запускалось"
         ui_drawn_segments = 0
-        if opened_in_kompas and package.get("source") == "image":
-            # Даем КОМПАС открыть документ полностью, затем рисуем по рабочему полю окна.
+        if package.get("source") == "image":
+            # Если нативный .cdw не создан, всё равно запускаем КОМПАС и строим по UI-сценарию.
             import time
 
-            time.sleep(1.2)
+            if not opened_in_kompas:
+                try:
+                    if sys.platform.startswith("win"):
+                        subprocess.Popen(["cmd", "/c", "start", "", str(self.compas_executable)])
+                    else:
+                        subprocess.Popen([str(self.compas_executable)])
+                    time.sleep(1.6)
+                except Exception as exc:  # noqa: BLE001
+                    warnings.append(f"Не удалось запустить КОМПАС для UI-построения: {exc}")
+
+            time.sleep(0.8)
             ui_res = self.ui_automator.draw_segments_in_open_window(
                 segments=package.get("geometry_segments", []),
                 draw_delay_s=float(package.get("draw_delay_s", 0.01) or 0.01),
+                ensure_new_document=True,
             )
             ui_draw_message = ui_res.message
             ui_drawn_segments = ui_res.drawn_segments

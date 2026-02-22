@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
 
 
 @dataclass
@@ -14,44 +12,72 @@ class UIDrawResult:
 
 
 class KompasUIAutomator:
-    """Управление КОМПАС через окно/мышь для наблюдаемого построения.
+    """Управление КОМПАС через окно/мышь для наблюдаемого построения."""
 
-    Важно: это fallback для случаев, когда COM-рисование нестабильно на конкретной версии.
-    """
+    def _find_kompas_window(self):
+        import pygetwindow as gw  # type: ignore
+
+        windows = [w for w in gw.getAllWindows() if w.title and "КОМПАС" in w.title.upper()]
+        if not windows:
+            return None
+        return windows[0]
+
+    def _activate_and_maximize(self, w) -> None:
+        try:
+            w.activate()
+            time.sleep(0.25)
+            if hasattr(w, "maximize"):
+                w.maximize()
+                time.sleep(0.25)
+        except Exception:
+            pass
+
+    def _open_new_drawing_doc(self, pyautogui, w) -> None:
+        """Пытается создать/открыть рабочий документ чертежа через UI."""
+        left, top, width, height = int(w.left), int(w.top), int(w.width), int(w.height)
+
+        # Универсальная попытка: Ctrl+N
+        pyautogui.hotkey("ctrl", "n")
+        time.sleep(0.45)
+
+        # Клик по плитке "Чертеж" в окне выбора типа документа (если оно открылось)
+        draw_tile_x = int(left + width * 0.47)
+        draw_tile_y = int(top + height * 0.38)
+        pyautogui.click(draw_tile_x, draw_tile_y)
+        time.sleep(0.15)
+        pyautogui.press("enter")
+        time.sleep(0.8)
 
     def draw_segments_in_open_window(
         self,
         segments: list[dict[str, float]],
         draw_delay_s: float = 0.01,
+        ensure_new_document: bool = True,
     ) -> UIDrawResult:
         if not segments:
             return UIDrawResult(False, 0, "UI-рисование пропущено: нет сегментов")
 
         try:
             import pyautogui  # type: ignore
-            import pygetwindow as gw  # type: ignore
+            import pygetwindow as _  # type: ignore
         except Exception as exc:  # noqa: BLE001
             return UIDrawResult(False, 0, f"UI-рисование недоступно: {exc}")
 
-        windows = [w for w in gw.getAllWindows() if w.title and "КОМПАС" in w.title.upper()]
-        if not windows:
+        w = self._find_kompas_window()
+        if not w:
             return UIDrawResult(False, 0, "Окно КОМПАС не найдено для UI-рисования")
 
-        w = windows[0]
-        try:
-            w.activate()
-            time.sleep(0.2)
-            if hasattr(w, "maximize"):
-                w.maximize()
-                time.sleep(0.2)
-        except Exception:
-            pass
+        self._activate_and_maximize(w)
+
+        if ensure_new_document:
+            self._open_new_drawing_doc(pyautogui, w)
+            w = self._find_kompas_window() or w
+            self._activate_and_maximize(w)
 
         left, top, width, height = int(w.left), int(w.top), int(w.width), int(w.height)
         if width < 500 or height < 350:
             return UIDrawResult(False, 0, "Размер окна КОМПАС слишком мал для UI-рисования")
 
-        # Рабочее поле внутри окна (эмпирические проценты по интерфейсу КОМПАС).
         workspace = (
             int(left + width * 0.27),
             int(top + height * 0.18),
@@ -59,7 +85,6 @@ class KompasUIAutomator:
             int(top + height * 0.92),
         )
 
-        # Кнопка инструмента "Отрезок" (эмпирически в верхней ленте).
         line_tool_x = int(left + width * 0.13)
         line_tool_y = int(top + height * 0.105)
 
@@ -68,7 +93,7 @@ class KompasUIAutomator:
 
         try:
             pyautogui.click(line_tool_x, line_tool_y)
-            time.sleep(0.1)
+            time.sleep(0.15)
         except Exception as exc:  # noqa: BLE001
             return UIDrawResult(False, 0, f"Не удалось выбрать инструмент 'Отрезок': {exc}")
 
@@ -76,7 +101,6 @@ class KompasUIAutomator:
         ww = max(1, x1 - x0)
         wh = max(1, y1 - y0)
 
-        # Нормализация соответствует box в vectorize.py: x=[25..185], y=[35..145]
         def to_screen(x_mm: float, y_mm: float) -> tuple[int, int]:
             nx = (x_mm - 25.0) / 160.0
             ny = (y_mm - 35.0) / 110.0
@@ -101,8 +125,8 @@ class KompasUIAutomator:
                 pyautogui.click(sx1, sy1)
                 pyautogui.click(sx2, sy2)
                 drawn += 1
-                if drawn % 40 == 0:
-                    time.sleep(0.03)
+                if drawn % 30 == 0:
+                    time.sleep(0.04)
             except Exception:
                 continue
 
