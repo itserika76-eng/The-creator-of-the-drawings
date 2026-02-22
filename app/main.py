@@ -114,6 +114,9 @@ class App:
                 self.log.insert(tk.END, f"- {result.fallback_spw_payload_path}\n")
         self.log.insert(tk.END, "\nАвтооткрытие:\n")
         self.log.insert(tk.END, f"- {result.open_message}\n")
+        self.log.insert(tk.END, "\nUI-построение в окне КОМПАС:\n")
+        self.log.insert(tk.END, f"- {result.ui_draw_message}\n")
+        self.log.insert(tk.END, f"- Нанесено сегментов: {result.ui_drawn_segments}\n")
 
         if result.warnings:
             self.log.insert(tk.END, "\nПроверка стандартов (предупреждения):\n")

@@ -16,6 +16,7 @@ try:
     from .rag import StandardsRAG, hits_as_dict
     from .standards import validate_package, rules_as_dict
     from .vectorize import ImageVectorizer, segments_as_dict
+    from .ui_automation import KompasUIAutomator
 except ImportError:
     from cv_ocr import CVOCRPipeline
     from kompas_api import KompasExporter
@@ -23,6 +24,7 @@ except ImportError:
     from rag import StandardsRAG, hits_as_dict
     from standards import validate_package, rules_as_dict
     from vectorize import ImageVectorizer, segments_as_dict
+    from ui_automation import KompasUIAutomator
 
 
 @dataclass
@@ -37,6 +39,8 @@ class BuildResult:
     warnings: list[str]
     opened_in_kompas: bool
     open_message: str
+    ui_draw_message: str
+    ui_drawn_segments: int
 
 
 class DrawingEngine:
@@ -55,6 +59,7 @@ class DrawingEngine:
         )
         self.kompas_exporter = KompasExporter(compas_executable=compas_executable)
         self.vectorizer = ImageVectorizer()
+        self.ui_automator = KompasUIAutomator()
 
     def build_from_image(self, image_path: Path, project_name: str) -> BuildResult:
         cv_result = self.cv_pipeline.analyze_drawing_image(image_path)
@@ -198,6 +203,22 @@ print('Импортируйте пакет в реальный API КОМПАС-
         if not opened_in_kompas and open_message:
             warnings.append(open_message)
 
+        ui_draw_message = "UI-рисование не запускалось"
+        ui_drawn_segments = 0
+        if opened_in_kompas and package.get("source") == "image":
+            # Даем КОМПАС открыть документ полностью, затем рисуем по рабочему полю окна.
+            import time
+
+            time.sleep(1.2)
+            ui_res = self.ui_automator.draw_segments_in_open_window(
+                segments=package.get("geometry_segments", []),
+                draw_delay_s=float(package.get("draw_delay_s", 0.01) or 0.01),
+            )
+            ui_draw_message = ui_res.message
+            ui_drawn_segments = ui_res.drawn_segments
+            if not ui_res.success:
+                warnings.append(ui_res.message)
+
         return BuildResult(
             package_path=package_path,
             specification_path=specification_path,
@@ -209,6 +230,8 @@ print('Импортируйте пакет в реальный API КОМПАС-
             warnings=warnings,
             opened_in_kompas=opened_in_kompas,
             open_message=open_message,
+            ui_draw_message=ui_draw_message,
+            ui_drawn_segments=ui_drawn_segments,
         )
 
     def _open_generated_drawing(self, cdw_path: Path | None) -> tuple[bool, str]:
