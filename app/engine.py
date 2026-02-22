@@ -15,7 +15,7 @@ try:
     from .legal_update import LegalRegistryUpdater
     from .rag import StandardsRAG, hits_as_dict
     from .standards import validate_package, rules_as_dict
-    from .vectorize import ImageVectorizer, segments_as_dict
+    from .vectorize import ImageVectorizer, cad_box_as_dict, segments_as_dict
     from .ui_automation import KompasUIAutomator
 except ImportError:
     from cv_ocr import CVOCRPipeline
@@ -23,7 +23,7 @@ except ImportError:
     from legal_update import LegalRegistryUpdater
     from rag import StandardsRAG, hits_as_dict
     from standards import validate_package, rules_as_dict
-    from vectorize import ImageVectorizer, segments_as_dict
+    from vectorize import ImageVectorizer, cad_box_as_dict, segments_as_dict
     from ui_automation import KompasUIAutomator
 
 
@@ -75,6 +75,7 @@ class DrawingEngine:
             "reference_standards_hits": hits_as_dict(rag_hits),
             "geometry_segments": segments_as_dict(segments),
             "geometry_segment_count": len(segments),
+            "geometry_box": cad_box_as_dict(),
             "draw_delay_s": 0.01,
             "specification_items": [
                 {
@@ -223,6 +224,7 @@ print('Импортируйте пакет в реальный API КОМПАС-
             ui_res = self.ui_automator.draw_segments_in_open_window(
                 segments=package.get("geometry_segments", []),
                 draw_delay_s=float(package.get("draw_delay_s", 0.01) or 0.01),
+                geometry_box=package.get("geometry_box"),
                 ensure_new_document=True,
             )
             ui_draw_message = ui_res.message

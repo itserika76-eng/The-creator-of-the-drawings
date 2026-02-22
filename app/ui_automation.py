@@ -52,6 +52,7 @@ class KompasUIAutomator:
         self,
         segments: list[dict[str, float]],
         draw_delay_s: float = 0.01,
+        geometry_box: dict[str, float] | None = None,
         ensure_new_document: bool = True,
     ) -> UIDrawResult:
         if not segments:
@@ -101,9 +102,11 @@ class KompasUIAutomator:
         ww = max(1, x1 - x0)
         wh = max(1, y1 - y0)
 
+        box = geometry_box or {"x0": 30.0, "y0": 40.0, "w": 150.0, "h": 100.0}
+
         def to_screen(x_mm: float, y_mm: float) -> tuple[int, int]:
-            nx = (x_mm - 25.0) / 160.0
-            ny = (y_mm - 35.0) / 110.0
+            nx = (x_mm - float(box.get("x0", 30.0))) / max(1e-6, float(box.get("w", 150.0)))
+            ny = (y_mm - float(box.get("y0", 40.0))) / max(1e-6, float(box.get("h", 100.0)))
             nx = max(0.0, min(1.0, nx))
             ny = max(0.0, min(1.0, ny))
             sx = int(x0 + nx * ww)
