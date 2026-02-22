@@ -225,6 +225,7 @@ print('Импортируйте пакет в реальный API КОМПАС-
                 segments=package.get("geometry_segments", []),
                 draw_delay_s=float(package.get("draw_delay_s", 0.01) or 0.01),
                 geometry_box=package.get("geometry_box"),
+                source_image_path=str(package.get("image_path", "")) or None,
                 ensure_new_document=True,
             )
             ui_draw_message = ui_res.message

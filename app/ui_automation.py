@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass
@@ -33,14 +34,9 @@ class KompasUIAutomator:
             pass
 
     def _open_new_drawing_doc(self, pyautogui, w) -> None:
-        """Пытается создать/открыть рабочий документ чертежа через UI."""
         left, top, width, height = int(w.left), int(w.top), int(w.width), int(w.height)
-
-        # Универсальная попытка: Ctrl+N
         pyautogui.hotkey("ctrl", "n")
         time.sleep(0.45)
-
-        # Клик по плитке "Чертеж" в окне выбора типа документа (если оно открылось)
         draw_tile_x = int(left + width * 0.47)
         draw_tile_y = int(top + height * 0.38)
         pyautogui.click(draw_tile_x, draw_tile_y)
@@ -48,11 +44,55 @@ class KompasUIAutomator:
         pyautogui.press("enter")
         time.sleep(0.8)
 
+    def _score_batch(self, before_img, after_img, target_edges) -> float:
+        import cv2  # type: ignore
+        import numpy as np  # type: ignore
+
+        b_gray = cv2.cvtColor(before_img, cv2.COLOR_RGB2GRAY)
+        a_gray = cv2.cvtColor(after_img, cv2.COLOR_RGB2GRAY)
+
+        b_edges = cv2.Canny(b_gray, 60, 140)
+        a_edges = cv2.Canny(a_gray, 60, 140)
+        new_edges = cv2.bitwise_and(a_edges, cv2.bitwise_not(b_edges))
+
+        if target_edges is None:
+            return float(np.count_nonzero(new_edges))
+
+        # F-score-like: насколько новые штрихи совпадают с целевой картой
+        overlap = np.count_nonzero(cv2.bitwise_and(new_edges, target_edges))
+        drawn = max(1, np.count_nonzero(new_edges))
+        target = max(1, np.count_nonzero(target_edges))
+        precision = overlap / drawn
+        recall = overlap / target
+        if precision + recall == 0:
+            return 0.0
+        return 2 * precision * recall / (precision + recall)
+
+    def _build_target_edges(self, source_image_path: str | None, workspace_wh: tuple[int, int]):
+        if not source_image_path:
+            return None
+        try:
+            import cv2  # type: ignore
+            import numpy as np  # type: ignore
+
+            img = cv2.imread(str(source_image_path), cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                return None
+            img = cv2.resize(img, workspace_wh)
+            _, bw = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+            edges = cv2.Canny(bw, 50, 150)
+            kernel = np.ones((2, 2), np.uint8)
+            edges = cv2.dilate(edges, kernel, iterations=1)
+            return edges
+        except Exception:
+            return None
+
     def draw_segments_in_open_window(
         self,
         segments: list[dict[str, float]],
         draw_delay_s: float = 0.01,
         geometry_box: dict[str, float] | None = None,
+        source_image_path: str | None = None,
         ensure_new_document: bool = True,
     ) -> UIDrawResult:
         if not segments:
@@ -89,7 +129,7 @@ class KompasUIAutomator:
         line_tool_x = int(left + width * 0.13)
         line_tool_y = int(top + height * 0.105)
 
-        pyautogui.PAUSE = max(0.001, min(draw_delay_s, 0.08))
+        pyautogui.PAUSE = max(0.001, min(draw_delay_s, 0.06))
         pyautogui.FAILSAFE = False
 
         try:
@@ -101,8 +141,9 @@ class KompasUIAutomator:
         x0, y0, x1, y1 = workspace
         ww = max(1, x1 - x0)
         wh = max(1, y1 - y0)
-
         box = geometry_box or {"x0": 30.0, "y0": 40.0, "w": 150.0, "h": 100.0}
+
+        target_edges = self._build_target_edges(source_image_path, (ww, wh))
 
         def to_screen(x_mm: float, y_mm: float) -> tuple[int, int]:
             nx = (x_mm - float(box.get("x0", 30.0))) / max(1e-6, float(box.get("w", 150.0)))
@@ -114,24 +155,55 @@ class KompasUIAutomator:
             return sx, sy
 
         drawn = 0
-        for seg in segments:
+        batch_size = 12
+        accepted_score = 0.0
+
+        for i in range(0, len(segments), batch_size):
+            batch = segments[i : i + batch_size]
+            before = pyautogui.screenshot(region=(x0, y0, ww, wh))
+
+            batch_drawn = 0
+            for seg in batch:
+                try:
+                    sx1, sy1 = to_screen(float(seg["x1"]), float(seg["y1"]))
+                    sx2, sy2 = to_screen(float(seg["x2"]), float(seg["y2"]))
+                except Exception:
+                    continue
+
+                if abs(sx1 - sx2) + abs(sy1 - sy2) < 3:
+                    continue
+
+                try:
+                    # плавнее: подводим курсор к началу
+                    pyautogui.moveTo(sx1, sy1, duration=0.03)
+                    pyautogui.click(sx1, sy1)
+                    pyautogui.moveTo(sx2, sy2, duration=0.04)
+                    pyautogui.click(sx2, sy2)
+                    batch_drawn += 1
+                except Exception:
+                    continue
+
+            after = pyautogui.screenshot(region=(x0, y0, ww, wh))
             try:
-                sx1, sy1 = to_screen(float(seg["x1"]), float(seg["y1"]))
-                sx2, sy2 = to_screen(float(seg["x2"]), float(seg["y2"]))
+                import numpy as np  # type: ignore
+
+                score = self._score_batch(np.array(before), np.array(after), target_edges)
             except Exception:
+                score = 1.0
+
+            # Если качество стало хуже, откатываем пакет (редактирование/исправление)
+            if target_edges is not None and score + 1e-6 < accepted_score and batch_drawn > 0:
+                for _ in range(batch_drawn):
+                    pyautogui.hotkey("ctrl", "z")
+                    time.sleep(0.01)
+                # попытка альтернативы: уменьшаем влияние, пропускаем текущий пакет
                 continue
 
-            if abs(sx1 - sx2) + abs(sy1 - sy2) < 3:
-                continue
-
-            try:
-                pyautogui.click(sx1, sy1)
-                pyautogui.click(sx2, sy2)
-                drawn += 1
-                if drawn % 30 == 0:
-                    time.sleep(0.04)
-            except Exception:
-                continue
+            if score > accepted_score:
+                accepted_score = score
+            drawn += batch_drawn
+            if drawn % 40 == 0:
+                time.sleep(0.04)
 
         try:
             pyautogui.press("esc")
@@ -140,4 +212,6 @@ class KompasUIAutomator:
 
         if drawn == 0:
             return UIDrawResult(False, 0, "UI-рисование не нанесло ни одного сегмента")
-        return UIDrawResult(True, drawn, f"UI-рисование выполнено: нанесено сегментов {drawn}")
+
+        extra = f", quality_score={accepted_score:.4f}" if target_edges is not None else ""
+        return UIDrawResult(True, drawn, f"UI-рисование выполнено: нанесено сегментов {drawn}{extra}")
