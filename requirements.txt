@@ -1,0 +1,8 @@
+requests>=2.31.0
+numpy>=1.26.0
+opencv-python>=4.9.0.80
+pytesseract>=0.3.10
+scikit-learn>=1.4.0
+pywin32>=306; platform_system == "Windows"
+pyautogui>=0.9.54; platform_system == "Windows"
+PyGetWindow>=0.0.9; platform_system == "Windows"
