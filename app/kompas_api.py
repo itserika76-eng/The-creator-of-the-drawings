@@ -123,7 +123,8 @@ class KompasExporter:
                     continue
                 try:
                     result = method(*args)
-                    ok = bool(result) or result is None
+                    # Для COM-методов КОМПАС успех обычно возвращается как ненулевое значение.
+                    ok = result not in (None, 0, False)
                     if ok:
                         break
                 except Exception:  # noqa: BLE001
@@ -161,8 +162,8 @@ class KompasExporter:
             draw_obj = created_doc
 
         drawn = self._draw_segments_on_object(draw_obj, package)
-        if drawn < 20:
-            # Если геометрии почти нет, не считаем результат пригодным (чтобы не получать пустую рамку)
+        if drawn < 80:
+            # Если геометрии мало, считаем результат непригодным (иначе пользователь получает пустую рамку).
             return False
 
         for save_args in ((str(path),), (str(path), 0), (str(path), True)):
@@ -216,7 +217,7 @@ class KompasExporter:
             return False
 
         drawn = self._draw_segments_on_object(doc2d, package)
-        if drawn < 20:
+        if drawn < 80:
             return False
 
         try:
