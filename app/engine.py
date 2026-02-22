@@ -15,12 +15,14 @@ try:
     from .legal_update import LegalRegistryUpdater
     from .rag import StandardsRAG, hits_as_dict
     from .standards import validate_package, rules_as_dict
+    from .vectorize import ImageVectorizer, segments_as_dict
 except ImportError:
     from cv_ocr import CVOCRPipeline
     from kompas_api import KompasExporter
     from legal_update import LegalRegistryUpdater
     from rag import StandardsRAG, hits_as_dict
     from standards import validate_package, rules_as_dict
+    from vectorize import ImageVectorizer, segments_as_dict
 
 
 @dataclass
@@ -52,11 +54,13 @@ class DrawingEngine:
             docs_dir=self.output_dir,
         )
         self.kompas_exporter = KompasExporter(compas_executable=compas_executable)
+        self.vectorizer = ImageVectorizer()
 
     def build_from_image(self, image_path: Path, project_name: str) -> BuildResult:
         cv_result = self.cv_pipeline.analyze_drawing_image(image_path)
         rag_hits = self.rag.retrieve(f"{project_name} ГОСТ ЕСКД рамка спецификация", top_k=3)
 
+        segments = self.vectorizer.extract_segments(image_path)
         package: dict[str, Any] = {
             "project_name": project_name,
             "source": "image",
@@ -64,6 +68,8 @@ class DrawingEngine:
             "cv_ocr": self.cv_pipeline.to_dict(cv_result),
             "detected_entities": cv_result.entities,
             "reference_standards_hits": hits_as_dict(rag_hits),
+            "geometry_segments": segments_as_dict(segments),
+            "geometry_segment_count": len(segments),
             "specification_items": [
                 {
                     "Позиция": 1,
@@ -73,11 +79,13 @@ class DrawingEngine:
                     "Примечание": "Автосоздано",
                 }
             ],
-            "notes": "Масштаб 1:1, единицы измерения мм, допуск H7 для ключевых посадок.",
+            "notes": "Масштаб 1:1, единицы измерения мм, допуск H7 для ключевых посадок. Геометрия построена из векторизованных сегментов изображения.",
             "standard_profile": "ЕСКД",
         }
         if cv_result.warnings:
             package["cv_warnings"] = cv_result.warnings
+        if len(segments) < 20:
+            package["vectorization_warning"] = "Распознано мало сегментов; геометрия может быть неполной"
 
         return self._persist_artifacts(package)
 
