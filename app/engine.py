@@ -70,6 +70,7 @@ class DrawingEngine:
             "reference_standards_hits": hits_as_dict(rag_hits),
             "geometry_segments": segments_as_dict(segments),
             "geometry_segment_count": len(segments),
+            "draw_delay_s": 0.01,
             "specification_items": [
                 {
                     "Позиция": 1,
@@ -79,7 +80,7 @@ class DrawingEngine:
                     "Примечание": "Автосоздано",
                 }
             ],
-            "notes": "Масштаб 1:1, единицы измерения мм, допуск H7 для ключевых посадок. Геометрия построена из векторизованных сегментов изображения.",
+            "notes": "Масштаб 1:1, единицы измерения мм, допуск H7 для ключевых посадок. Геометрия построена из векторизованных сегментов изображения в пошаговом режиме.",
             "standard_profile": "ЕСКД",
         }
         if cv_result.warnings:

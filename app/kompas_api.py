@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,7 @@ class KompasExportResult:
 
 
 class KompasExporter:
-    """Экспорт в КОМПАС-3D: создаёт валидный .cdw и переносит векторизованную геометрию."""
+    """Экспорт в КОМПАС-3D: создаёт валидный .cdw и строит геометрию пошагово (наблюдаемый процесс)."""
 
     def __init__(self, compas_executable: Path) -> None:
         self.compas_executable = compas_executable
@@ -76,6 +77,17 @@ class KompasExporter:
 
         errors: list[str] = []
 
+        # Приоритет v5: у него стабильный 2D API для пошагового построения (наблюдаемый режим).
+        try:
+            app5 = win32com.client.Dispatch("KOMPAS.Application.5")
+            app5.Visible = True
+            if self._create_cdw_v5_observable(app5, native_cdw_path, package):
+                self._create_spw_v5(app5, native_spw_path)
+                return True
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"v5(observable): {exc}")
+
+        # fallback на v7
         try:
             app7 = win32com.client.Dispatch("Kompas.Application.7")
             app7.Visible = True
@@ -84,15 +96,6 @@ class KompasExporter:
                 return True
         except Exception as exc:  # noqa: BLE001
             errors.append(f"v7: {exc}")
-
-        try:
-            app5 = win32com.client.Dispatch("KOMPAS.Application.5")
-            app5.Visible = True
-            if self._create_cdw_v5(app5, native_cdw_path, package):
-                self._create_spw_v5(app5, native_spw_path)
-                return True
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"v5: {exc}")
 
         raise RuntimeError("; ".join(errors) if errors else "Не удалось подключиться к COM API")
 
@@ -134,6 +137,80 @@ class KompasExporter:
                 drawn += 1
 
         return drawn
+
+    def _create_cdw_v5_observable(self, app5: Any, path: Path, package: dict[str, Any]) -> bool:
+        segments = package.get("geometry_segments", [])
+        if not isinstance(segments, list) or len(segments) < 30:
+            return False
+
+        doc2d = app5.Document2D()
+
+        created = False
+        for create_args in ((str(path), 0, False), (str(path), 0), (str(path),)):
+            try:
+                result = doc2d.ksCreateDocument(*create_args)
+                if result:
+                    created = True
+                    break
+            except Exception:  # noqa: BLE001
+                continue
+
+        if not created:
+            return False
+
+        # Пошаговое построение, чтобы пользователь видел процесс в КОМПАС.
+        draw_delay = float(package.get("draw_delay_s", 0.01) or 0.01)
+        draw_delay = max(0.001, min(draw_delay, 0.2))
+
+        drawn = 0
+        for seg in segments:
+            if not isinstance(seg, dict):
+                continue
+            try:
+                x1, y1 = float(seg["x1"]), float(seg["y1"])
+                x2, y2 = float(seg["x2"]), float(seg["y2"])
+            except Exception:  # noqa: BLE001
+                continue
+
+            ok = False
+            for method_name, args in (
+                ("ksLineSeg", (x1, y1, x2, y2, 1)),
+                ("ksLine", (x1, y1, x2, y2, 1)),
+            ):
+                method = getattr(doc2d, method_name, None)
+                if method is None:
+                    continue
+                try:
+                    result = method(*args)
+                    if result not in (None, 0, False):
+                        ok = True
+                        break
+                except Exception:  # noqa: BLE001
+                    continue
+
+            if ok:
+                drawn += 1
+                # Периодически перерисовываем и даём UI время показать добавленные элементы.
+                if drawn % 20 == 0:
+                    try:
+                        app5.ksRedrawDocument()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    time.sleep(draw_delay)
+
+        try:
+            app5.ksRedrawDocument()
+        except Exception:  # noqa: BLE001
+            pass
+
+        if drawn < 80:
+            return False
+
+        try:
+            doc2d.ksSaveDocument(str(path))
+        except Exception:  # noqa: BLE001
+            pass
+        return path.exists() and path.stat().st_size > 0
 
     def _create_cdw_v7(self, app7: Any, path: Path, package: dict[str, Any]) -> bool:
         docs = getattr(app7, "Documents", None)
